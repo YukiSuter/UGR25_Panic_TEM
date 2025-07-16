@@ -105,7 +105,7 @@ public:
         bms.data[2] = this->max; // Highest Temp
         bms.data[3] = this->avg; // Average Temp
         bms.data[4] = this->thermCount; // No. of thermistors
-        bms.data[5] = (this->segNo-1)*80 + 11; // Highest thermistor ID on module (zero-based)
+        bms.data[5] = (this->segNo-1)*80 + this->thermCount-1; // Highest thermistor ID on module (zero-based)
         bms.data[6] = (this->segNo-1)*80; // Lowest thermistor ID on module (zero-based)
         bms.data[7] = bms.data[0] + bms.data[1] + bms.data[2] + bms.data[3] + bms.data[4] + bms.data[5] + bms.data[6] + 0x39 + bms.data_length_code; // Checksum
 
