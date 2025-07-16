@@ -54,6 +54,10 @@ public:
         }
     }
 
+    void filter() {
+        // Do filter stuff
+    }
+
     Thermistor(int pin) {
         pinNo = pin;
         temperature = 0;
@@ -118,7 +122,7 @@ public:
         for (int i=0; i<this->therms.size(); i++) {
             this->therms[i].readPin();
             this->therms[i].volt2temp();
-            // Put filtering here (Create a method function in thermistor)
+            this->therms[i].filter();
             this->calcInfo();
         }
     }
@@ -207,7 +211,8 @@ void loop() {
   for (ThermSegment ts : segVec) {
       ts.update();
       ts.bmsCAN();
+      delay(100/segVec.size());
   }
 
-  delay(100);  // Adjust delay as needed
+  if (segVec.size() <= 0) {delay(100);} // In case segvec is empty for whatever reason
 }
