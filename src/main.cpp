@@ -4,11 +4,21 @@
 #include "driver/twai.h"
 #include <string>
 #include <vector>
+#include <Arduino_JSON.h>
+#include <ElegantOTA.h>
+#include <AsyncTCP.h>
+
+// secrets
+#include "secrets.h"
 
 // Config
 
 float interp_volt[6] = {2.17,1.92,1.68,1.59,1.51,1.48};
 float interp_eq[14] = {-148.15, 321.48, -80, 173.6, -83.33, 180, -111.11, 226.67, -125, 248.75, -166.67, 311.67, -275, 472}; // m1,c1,m2,c2 etc
+
+int therm_module_no = 1;
+
+AsyncWebServer server(80);
 
 // CAN Driver Configuration
 
@@ -23,39 +33,85 @@ twai_general_config_t loopbackConfig = TWAI_GENERAL_CONFIG_DEFAULT(
     TWAI_MODE_NO_ACK  // Enables internal loopback mode
 );
 
+// Global fault variable
+
+bool trigger_fault = false;
+
 // Therm Classes
 
 class Thermistor {
 private:
     float voltage;
-    int temperature;
+    float temperature;
+    float old_temperature;
+    int delta_count;
+    int fault_count;
+    int temp_err_count;
     int pinNo;
 
+
 public:
+    float getVoltage() {return this->voltage;}
     int getTemp() {
         return this->temperature;
     }
 
     void readPin() {
         // Test 1: Just create the AnalogIn object, don't read from it
-        this->voltage = analogRead(this->pinNo)*5;
+        this->voltage = ((analogRead(this->pinNo))*(3.1f/4095));
     }
 
     void volt2temp() {
         // CONVERSION LOGIC
-        for (int j= 0; j < 6; j++) {
+        bool tempCalculated = false;
+    
+        for (int j = 0; j < 6; j++) {
             if (this->voltage > interp_volt[j]) {
                 float m = interp_eq[2*j];
                 float c = interp_eq[(2*j) + 1];
-
-                this->temperature = m*(this->voltage) + c;
+                
+                this->temperature = (m * (this->voltage)) + c;
+                tempCalculated = true;
                 break;
             }
+        }
+        
+        // Handle case where voltage is lower than all thresholds
+        // Use the last segment (lowest voltage range)
+        if (!tempCalculated) {
+            float m = interp_eq[2*5];  // Use j=5 (last valid index)
+            float c = interp_eq[(2*5) + 1];
+            this->temperature = m * (this->voltage) + c;
         }
     }
 
     void filter() {
-        // Do filter stuff
+        bool fault_counted;
+        // Delta handler
+        float delta = this->temperature - this->old_temperature;
+        
+        if (abs(delta) >= 10) { this->delta_count += 1; } 
+        else { this->delta_count = 0; }
+
+        // Temp err handler
+
+        if (this->temperature < 60 || this->temperature < 5) {this->temp_err_count += 1;}
+        else {this->temp_err_count = 0;}
+
+        // Fault count handler
+        
+        if (this->temp_err_count > 3 || this->delta_count > 5) {fault_count += 1;}
+        else {fault_count = 0;}
+
+        if (fault_count > 3) {
+            trigger_fault = true;
+            Serial.println("Triggering module fault state");
+        }
+    }
+
+    bool getFaulted() {
+        if (this->fault_count > 0) {return true;}
+        else {return false;}
     }
 
     Thermistor(int pin) {
@@ -63,7 +119,7 @@ public:
         temperature = 0;
         voltage = 0.0f;
 
-        pinMode(pin, OUTPUT);
+        pinMode(pin, INPUT);
     }
 };
 
@@ -79,6 +135,20 @@ private:
     std::vector<Thermistor> therms;
 
 public:
+    int getSegNo(){
+        return this->segNo;
+    }
+
+    const std::vector<Thermistor>& getThermistors() const {
+        return this->therms;
+    }
+    
+    // Add this method to get a specific thermistor by index
+    const Thermistor& getThermistor(int index) const {
+        return this->therms[index];
+    }
+
+
     void calcInfo() {
         this->min = therms[0].getTemp();
         this->max = therms[0].getTemp();
@@ -86,15 +156,28 @@ public:
         int runningTotal = 0;
 
         for (int i=0; i<this->therms.size(); i++) {
-            int currTemp = this->therms[i].getTemp();
-            runningTotal += currTemp;
-            if (currTemp < this->min){this->min = currTemp;}
-            if (currTemp > this->max){this->max = currTemp;}
-            this->avg = currTemp/this->therms.size();
+            // Discount faulty readings
+            if (this->therms[i].getFaulted() == false) {
+                // Calculate
+                int currTemp = this->therms[i].getTemp();
+                runningTotal += currTemp;
+                if (currTemp < this->min){this->min = currTemp;}
+                if (currTemp > this->max){this->max = currTemp;}
+                this->avg = currTemp/this->therms.size();
+            } else {
+                Serial.println("Skipping faulted sensor");
+            }
+
         }
     }
 
     void bmsCAN() {
+        int TC_bms = this->thermCount;
+
+        if (trigger_fault) {
+            TC_bms = 0x80;
+        }
+
         twai_message_t bms;
         bms.identifier = 0x1839F380;
         bms.extd = 1;  // Standard CAN frame (not extended)
@@ -105,7 +188,7 @@ public:
         bms.data[2] = this->max; // Highest Temp
         bms.data[3] = this->avg; // Average Temp
         bms.data[4] = this->thermCount; // No. of thermistors
-        bms.data[5] = (this->segNo-1)*80 + this->thermCount-1; // Highest thermistor ID on module (zero-based)
+        bms.data[5] = (this->segNo-1)*80 + this->thermCount; // Highest thermistor ID on module (zero-based)
         bms.data[6] = (this->segNo-1)*80; // Lowest thermistor ID on module (zero-based)
         bms.data[7] = bms.data[0] + bms.data[1] + bms.data[2] + bms.data[3] + bms.data[4] + bms.data[5] + bms.data[6] + 0x39 + bms.data_length_code; // Checksum
 
@@ -121,8 +204,10 @@ public:
     void update() {
         for (int i=0; i<this->therms.size(); i++) {
             this->therms[i].readPin();
+            // Serial.println(this->therms[i].getVoltage());
             this->therms[i].volt2temp();
-            this->therms[i].filter();
+            // Serial.println(this->therms[i].getTemp());
+            // this->therms[i].filter();
             this->calcInfo();
         }
     }
@@ -141,6 +226,17 @@ std::vector<ThermSegment> segVec;
 
 void setup() {
   Serial.begin(115200);
+    analogSetAttenuation(ADC_11db);
+
+  // WiFi Setup
+  WiFi.mode(WIFI_STA);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  WiFi.setHostname("UGRacing_TEM"+(char)(therm_module_no));
+  WiFi.begin(ssid, password);
+
+  delay(5000);
+
+  ElegantOTA.begin(&server);    // Start ElegantOTA
 
   // CAN SETUP ===========================
   Serial.println("Initializing CAN Receiver...");
@@ -174,45 +270,69 @@ void setup() {
 
   // Initialise thermistors and add to therms
 
-  segVec.push_back(ThermSegment(1, {6}));
+  segVec.push_back(ThermSegment(therm_module_no, {6,7,15,16,17,18,8,9,10,11,12,13,14,1,2}));
 
+  // Webserver
+
+
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("main.html");
+
+  server.on("/api/thermistors", HTTP_GET, [](AsyncWebServerRequest *request){
+    JSONVar jsonmessage;
+    JSONVar thermistors = JSONVar();
+    
+    // Loop through all segments
+    for (int segmentIndex = 0; segmentIndex < segVec.size(); segmentIndex++) {
+        ThermSegment& segment = segVec[segmentIndex];
+
+        segment.update();
+        
+        // Get all thermistors in this segment
+        const std::vector<Thermistor>& segmentTherms = segment.getThermistors();
+        
+        // Loop through all thermistors in this segment
+        for (int thermIndex = 0; thermIndex < segmentTherms.size(); thermIndex++) {
+            Thermistor therm = segmentTherms[thermIndex];
+
+            
+            // Create JSON object for this thermistor
+            JSONVar thermData;
+            thermData["segmentNumber"] = segment.getSegNo();
+            thermData["thermistorNumber"] = thermIndex + 1; // 1-based numbering
+            thermData["temperature"] = therm.getVoltage();
+            // Serial.println(therm.getVoltage());
+            // Serial.println(therm.getTemp());
+
+            
+            // Add to thermistors array
+            thermistors[thermistors.length() + 1] = thermData;
+        }
+    }
+    
+    // Build final JSON message
+    jsonmessage["thermistors"] = thermistors;
+    
+    String jsonstring = JSON.stringify(jsonmessage);
+    
+    request->send(200, "application/json", jsonstring);
+  });
+
+  server.begin();
 }
 
 std::vector<Thermistor> therms;
 
 void loop() {
-  
-  // twai_message_t msgcheck = checkForMessages();
-
-  // if (msgcheck.identifier < 0xFFFFFFFF) {
-  //   // Handle incoming messages
-  // }
-  
-  // uint8_t data[8] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};  // Example data
-  // // identifier = 0x1839F380;
-
-  // // messageTx(identifier, data_length_code, data);
-
-  // twai_message_t tx_message;
-  // tx_message.identifier = 0x1839F380;
-  // tx_message.extd = 1;  // Standard CAN frame (not extended)
-  // tx_message.rtr = 0;  // Ensure it's a normal data frame
-  // tx_message.data_length_code = 0x8;  // Number of data bytes
-  // memset(tx_message.data, 0, 8);  // Ensure no residual values
-  // memcpy(tx_message.data, data, 8);
-
-  // // Transmit message
-  // if (twai_transmit(&tx_message, pdMS_TO_TICKS(1000)) == ESP_OK) {
-  //     Serial.println("Message Sent");
-  // } else {
-  //     Serial.println("Failed to send message");
-  // }
-
   for (ThermSegment ts : segVec) {
       ts.update();
       ts.bmsCAN();
       delay(100/segVec.size());
   }
 
+  Serial.println(WiFi.status());
+
+  Serial.println(WiFi.localIP());
+
   if (segVec.size() <= 0) {delay(100);} // In case segvec is empty for whatever reason
+  ElegantOTA.loop();
 }

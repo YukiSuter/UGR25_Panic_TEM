@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="./output.css" type="text/css" rel="stylesheet">
+    </link>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      p {
+        color: white;
+        font-size: 1.125rem;
+        /* 18px */
+        line-height: 1.75rem;
+        /* 28px */
+      }
+
+      .configRow {
+        padding-top: 10px;
+        padding-bottom: 10px;
+      }
+    </style>
+    <title>UGR ThermMon</title>
+  </head>
+  <body>
+    <div class="flex flex-col min-h-screen bg-zinc-900 p-10 pt-5">
+      <div class="flex flex-row justify-between min-w-screen">
+        <h1 class="text-3xl text-white pb-7 pt-5">UGRacing - Thermistor Monitoring</h1>
+        <img src="./UGRLogo_whiteyellow.png" style="width:160px;height:70px;">
+      </div>
+          <div class="my-2 mx-2 pb-4 flex flex-row">
+            <label class="rounded-md text-md text-white my-1" for="address">IP Addresses:</label>
+            <br>
+            <input class="rounded-md mx-2 w-64 p-1" type="text" id="ips" name="address" value="" placeholder="xxx.xxx.xxx.xxx, xxx.xxx.xxx.xxx">
+            <br>
+            <input class="rounded-md px-5 bg-yellow-300 text-zinc-800 text-md text-white py-1 float-right mx-1" id="monitor_button" type="submit" value="🔴 Start Logging">
+          </div>
+      <div class="flex flex-col flex-grow bg-zinc-800 rounded-md border border-zinc-600">
+        <div class="flex flex-col items-start h-10">
+          
+          <div class="mx-2 mb-2">
+          <table class="w-full overflow-hidden">
+            <thead class="bg-zinc-800">
+              <tr>
+                <th class="text-white text-left p-3 border-b border-zinc-500">Segment #</th> <!-- Comment this out if not using segments -->
+                <th class="text-white text-left p-3 border-b border-zinc-500">Thermistor #</th>
+                <th class="text-white text-left p-3 border-b border-zinc-500">Temperature (°C)</th>
+              </tr>
+            </thead>
+            <tbody id="table_body">
+              <tr class="border-b border-zinc-600 hover:bg-zinc-650">
+                <td class="text-white px-3 py-1">1</td>
+                <td class="text-white px-3 py-1">1</td>
+                <td class="text-white px-3 py-1">23.4</td>
+              </tr>
+              <tr class="border-b border-zinc-600 hover:bg-zinc-650">
+                <td class="text-white px-3 py-1">2</td>
+                <td class="text-white px-3 py-1">1</td>
+                <td class="text-white px-3 py-1">23.4</td>
+              </tr>
+              <tr class="border-b border-zinc-600 hover:bg-zinc-650">
+                <td class="text-white px-3 py-1">3  </td>
+                <td class="text-white px-3 py-1">1</td>
+                <td class="text-white px-3 py-1">23.4</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+            
+
+        </div>
+      </div>
+    </div>
+    <script src="./main.js"></script>
+  </body>
+</html>
