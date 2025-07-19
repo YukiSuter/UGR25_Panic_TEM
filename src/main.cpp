@@ -16,7 +16,7 @@
 float interp_volt[6] = {2.17,1.92,1.68,1.59,1.51,1.48};
 float interp_eq[14] = {-148.15, 321.48, -80, 173.6, -83.33, 180, -111.11, 226.67, -125, 248.75, -166.67, 311.67, -275, 472}; // m1,c1,m2,c2 etc
 
-int therm_module_no = 1;
+int therm_module_no = 2;
 
 AsyncWebServer server(80);
 
@@ -54,6 +54,10 @@ public:
     float getVoltage() {return this->voltage;}
     int getTemp() {
         return this->temperature;
+    }
+
+    int getPin() {
+        return this->pinNo;
     }
 
     void readPin() {
@@ -150,24 +154,36 @@ public:
 
 
     void calcInfo() {
-        this->min = therms[0].getTemp();
-        this->max = therms[0].getTemp();
-
+        if (therms.empty()) return;
+        
+        // Initialize with first valid sensor
+        bool initialized = false;
         int runningTotal = 0;
+        int validSensorCount = 0;
 
-        for (int i=0; i<this->therms.size(); i++) {
-            // Discount faulty readings
+        for (int i = 0; i < this->therms.size(); i++) {
             if (this->therms[i].getFaulted() == false) {
-                // Calculate
                 int currTemp = this->therms[i].getTemp();
                 runningTotal += currTemp;
-                if (currTemp < this->min){this->min = currTemp;}
-                if (currTemp > this->max){this->max = currTemp;}
-                this->avg = currTemp/this->therms.size();
+                validSensorCount++;
+                
+                if (!initialized) {
+                    this->min = currTemp;
+                    this->max = currTemp;
+                    initialized = true;
+                } else {
+                    if (currTemp < this->min) { this->min = currTemp; }
+                    if (currTemp > this->max) { this->max = currTemp; }
+                }
             } else {
-                Serial.println("Skipping faulted sensor");
+                // Serial.println("Skipping faulted sensor");
             }
+        };
 
+        if (validSensorCount > 0) {
+            this->avg = runningTotal / validSensorCount;
+        } else {
+            this->avg = 0; // No valid sensors
         }
     }
 
@@ -208,11 +224,11 @@ public:
             this->therms[i].volt2temp();
             // Serial.println(this->therms[i].getTemp());
             // this->therms[i].filter();
-            this->calcInfo();
         }
+        this->calcInfo();
     }
 
-    ThermSegment(int num, std::initializer_list<int> pins) : segNo(num), thermCount(num) {
+    ThermSegment(int num, std::initializer_list<int> pins) : segNo(num), thermCount(pins.size()) {
         for (int pin : pins) {
             therms.emplace_back(Thermistor(pin));
         }
@@ -226,7 +242,7 @@ std::vector<ThermSegment> segVec;
 
 void setup() {
   Serial.begin(115200);
-    analogSetAttenuation(ADC_11db);
+  analogSetAttenuation(ADC_11db);
 
   // WiFi Setup
   WiFi.mode(WIFI_STA);
@@ -268,9 +284,19 @@ void setup() {
     return;
   }
 
-  // Initialise thermistors and add to therms
+  // Initialise thermistors and add to therms (comment as necessary)
 
-  segVec.push_back(ThermSegment(therm_module_no, {6,7,15,16,17,18,8,9,10,11,12,13,14,1,2}));
+  // original segVec.push:
+//   segVec.push_back(ThermSegment(therm_module_no, {6,7,15,16,17,18,8,9,10,11,12,13,14,1,2}));
+
+
+  // for module 1:
+//   segVec.push_back(ThermSegment(therm_module_no, {7,15,16,17,18,8,9,10,11,12,13,14,1,2}));
+  // for module 2:
+  segVec.push_back(ThermSegment(therm_module_no, {6,7,15,16,17,18,9,10,11,12,13,14,1,2}));
+
+
+
 
   // Webserver
 
@@ -299,9 +325,10 @@ void setup() {
             JSONVar thermData;
             thermData["segmentNumber"] = segment.getSegNo();
             thermData["thermistorNumber"] = thermIndex + 1; // 1-based numbering
-            thermData["temperature"] = therm.getVoltage();
+            thermData["temperature"] = therm.getTemp();
             // Serial.println(therm.getVoltage());
             // Serial.println(therm.getTemp());
+            // Serial.println(therm.getPin());
 
             
             // Add to thermistors array
